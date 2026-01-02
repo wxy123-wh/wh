@@ -1,0 +1,6 @@
+platform_name,product_name,brand,model,rating,review_time,content,like_count,review_id_raw
+JD,XX蓝牙耳机,品牌A,Model-X,5,2025-12-02 12:00:00,"<b>音质不错</b>，连接稳定，佩戴舒服。",12,r001
+JD,XX蓝牙耳机,品牌A,Model-X,2,2025-12-03 08:30:00,"续航太差了，掉电快。",3,r002
+TB,YY蓝牙耳机,品牌B,Model-Y,3,2025-12-03 09:10:00,"降噪一般，外观还行。",0,r003
+JD,XX蓝牙耳机,品牌A,Model-X,4,2025-12-04 20:00:00,"麦克风清晰，性价比高。",5,r005
+
