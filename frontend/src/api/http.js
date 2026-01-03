@@ -1,10 +1,21 @@
 import axios from 'axios'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL
+const TOKEN_KEY = 'repu_token'
+const ROLE_KEY = 'repu_role'
 
 export const http = axios.create({
   baseURL,
   timeout: 15000,
+})
+
+http.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 http.interceptors.response.use(
@@ -12,6 +23,13 @@ http.interceptors.response.use(
     const payload = resp?.data
     if (payload && typeof payload === 'object' && 'code' in payload) {
       if (payload.code !== 0) {
+        if (payload.code === 401) {
+          localStorage.removeItem(TOKEN_KEY)
+          localStorage.removeItem(ROLE_KEY)
+          if (window?.location?.pathname !== '/login') {
+            window.location.href = '/login'
+          }
+        }
         throw new Error(payload.msg || 'request error')
       }
       return payload.data
@@ -32,4 +50,3 @@ export function cleanParams(params) {
   })
   return out
 }
-

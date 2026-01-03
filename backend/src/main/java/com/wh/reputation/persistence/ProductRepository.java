@@ -7,6 +7,8 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 
 public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
+    Optional<ProductEntity> findFirstByNameOrderByIdAsc(String name);
+
     @Query("""
             select p from ProductEntity p
             where p.name = :name
@@ -19,4 +21,3 @@ public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
             @Param("model") String model
     );
 }
-

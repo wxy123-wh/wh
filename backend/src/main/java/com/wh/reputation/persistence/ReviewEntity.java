@@ -41,6 +41,9 @@ public class ReviewEntity {
     @Column(name = "content_clean", nullable = false)
     private String contentClean;
 
+    @Column(name = "tokens_json", columnDefinition = "json")
+    private String tokensJson;
+
     @Column(name = "review_time")
     private LocalDateTime reviewTime;
 
@@ -117,6 +120,10 @@ public class ReviewEntity {
         return contentClean;
     }
 
+    public String getTokensJson() {
+        return tokensJson;
+    }
+
     public LocalDateTime getReviewTime() {
         return reviewTime;
     }
@@ -147,5 +154,9 @@ public class ReviewEntity {
 
     public void setOverallSentimentScore(Double overallSentimentScore) {
         this.overallSentimentScore = overallSentimentScore;
+    }
+
+    public void setTokensJson(String tokensJson) {
+        this.tokensJson = tokensJson;
     }
 }

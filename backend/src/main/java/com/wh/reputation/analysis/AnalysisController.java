@@ -16,15 +16,21 @@ public class AnalysisController {
     private final ReviewAnalysisService reviewAnalysisService;
     private final AnalysisQueryService analysisQueryService;
     private final KeywordAnalysisService keywordAnalysisService;
+    private final TopicAnalysisService topicAnalysisService;
+    private final ClusterAnalysisService clusterAnalysisService;
 
     public AnalysisController(
             ReviewAnalysisService reviewAnalysisService,
             AnalysisQueryService analysisQueryService,
-            KeywordAnalysisService keywordAnalysisService
+            KeywordAnalysisService keywordAnalysisService,
+            TopicAnalysisService topicAnalysisService,
+            ClusterAnalysisService clusterAnalysisService
     ) {
         this.reviewAnalysisService = reviewAnalysisService;
         this.analysisQueryService = analysisQueryService;
         this.keywordAnalysisService = keywordAnalysisService;
+        this.topicAnalysisService = topicAnalysisService;
+        this.clusterAnalysisService = clusterAnalysisService;
     }
 
     @PostMapping("/run")
@@ -68,6 +74,29 @@ public class AnalysisController {
         return ApiResponse.ok(keywordAnalysisService.keywords(productId, aspectId, parseDateOrNull(start), parseDateOrNull(end), topN));
     }
 
+    @GetMapping("/topics")
+    public ApiResponse<TopicsResponseDto> topics(
+            @RequestParam("productId") Long productId,
+            @RequestParam(value = "start", required = false) String start,
+            @RequestParam(value = "end", required = false) String end
+    ) {
+        return ApiResponse.ok(topicAnalysisService.topics(productId, parseDateOrNull(start), parseDateOrNull(end)));
+    }
+
+    @GetMapping("/clusters")
+    public ApiResponse<ClustersResponseDto> clusters(
+            @RequestParam("productId") Long productId,
+            @RequestParam(value = "start", required = false) String start,
+            @RequestParam(value = "end", required = false) String end
+    ) {
+        return ApiResponse.ok(clusterAnalysisService.clusters(productId, parseDateOrNull(start), parseDateOrNull(end)));
+    }
+
+    @GetMapping("/clusters/{id}")
+    public ApiResponse<ClusterDetailResponseDto> clusterDetail(@PathVariable("id") Long id) {
+        return ApiResponse.ok(clusterAnalysisService.clusterDetail(id));
+    }
+
     private static LocalDate parseDateOrNull(String input) {
         if (input == null || input.isBlank()) {
             return null;
@@ -79,4 +108,3 @@ public class AnalysisController {
         }
     }
 }
-

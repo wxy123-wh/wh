@@ -31,7 +31,7 @@ public class MetaController {
     @GetMapping("/products")
     public ApiResponse<List<ProductMetaDto>> products() {
         var items = productRepository.findAll(Sort.by(Sort.Direction.ASC, "id")).stream()
-                .map(p -> new ProductMetaDto(p.getId(), p.getName(), p.getBrand(), p.getModel()))
+                .map(p -> new ProductMetaDto(p.getId(), p.getName(), p.getBrand(), p.getModel(), p.isCompetitor()))
                 .toList();
         return ApiResponse.ok(items);
     }
@@ -52,4 +52,3 @@ public class MetaController {
         return ApiResponse.ok(items);
     }
 }
-

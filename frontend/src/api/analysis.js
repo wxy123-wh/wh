@@ -17,3 +17,14 @@ export function fetchKeywords({ productId, aspectId, start, end, topN = 20 }) {
   })
 }
 
+export function fetchTopics({ productId, start, end }) {
+  return http.get('/api/analysis/topics', { params: buildCommonParams({ productId, start, end }) })
+}
+
+export function fetchClusters({ productId, start, end }) {
+  return http.get('/api/analysis/clusters', { params: buildCommonParams({ productId, start, end }) })
+}
+
+export function fetchClusterDetail(id) {
+  return http.get(`/api/analysis/clusters/${id}`)
+}

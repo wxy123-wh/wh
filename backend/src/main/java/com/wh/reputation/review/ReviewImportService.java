@@ -1,5 +1,7 @@
 package com.wh.reputation.review;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wh.reputation.analysis.ReviewAnalysisService;
 import com.wh.reputation.common.BadRequestException;
 import com.wh.reputation.persistence.PlatformEntity;
@@ -8,6 +10,14 @@ import com.wh.reputation.persistence.ProductEntity;
 import com.wh.reputation.persistence.ProductRepository;
 import com.wh.reputation.persistence.ReviewEntity;
 import com.wh.reputation.persistence.ReviewRepository;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.DateUtil;
+import org.apache.poi.ss.usermodel.FormulaEvaluator;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.ZoneId;
 import java.util.*;
 
 @Service
@@ -40,17 +51,61 @@ public class ReviewImportService {
     private final ProductRepository productRepository;
     private final ReviewRepository reviewRepository;
     private final ReviewAnalysisService reviewAnalysisService;
+    private final ObjectMapper objectMapper;
 
     public ReviewImportService(
             PlatformRepository platformRepository,
             ProductRepository productRepository,
             ReviewRepository reviewRepository,
-            ReviewAnalysisService reviewAnalysisService
+            ReviewAnalysisService reviewAnalysisService,
+            ObjectMapper objectMapper
     ) {
         this.platformRepository = platformRepository;
         this.productRepository = productRepository;
         this.reviewRepository = reviewRepository;
         this.reviewAnalysisService = reviewAnalysisService;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional
+    public ReviewImportResult importFile(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("file is required");
+        }
+
+        String filename = file.getOriginalFilename();
+        String lower = filename == null ? "" : filename.trim().toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".csv")) {
+            return importCsv(file);
+        }
+        if (lower.endsWith(".xlsx")) {
+            return importXlsx(file);
+        }
+        if (lower.endsWith(".json")) {
+            return importJsonFile(file);
+        }
+
+        String contentType = file.getContentType();
+        String contentTypeLower = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+        if (contentTypeLower.contains("spreadsheet") || contentTypeLower.contains("excel")) {
+            return importXlsx(file);
+        }
+        if (contentTypeLower.contains("json")) {
+            return importJsonFile(file);
+        }
+        if (contentTypeLower.contains("csv") || contentTypeLower.contains("text/plain")) {
+            return importCsv(file);
+        }
+
+        throw new BadRequestException("unsupported file type");
+    }
+
+    @Transactional
+    public ReviewImportResult importJson(List<ReviewImportItem> items) {
+        if (items == null) {
+            throw new BadRequestException("body is required");
+        }
+        return importItems(items);
     }
 
     @Transactional
@@ -109,6 +164,119 @@ public class ReviewImportService {
             throw new IllegalStateException("failed to read csv", e);
         }
 
+        return saveValidRows(validRows, errors);
+    }
+
+    private ReviewImportResult importJsonFile(MultipartFile file) {
+        List<ReviewImportItem> items;
+        try (var input = file.getInputStream()) {
+            items = objectMapper.readValue(input, new TypeReference<>() {});
+        } catch (IOException e) {
+            throw new BadRequestException("invalid json file");
+        }
+        return importItems(items);
+    }
+
+    private ReviewImportResult importXlsx(MultipartFile file) {
+        int errors = 0;
+        List<ValidRow> validRows = new ArrayList<>();
+
+        try (var workbook = WorkbookFactory.create(file.getInputStream())) {
+            Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : null;
+            if (sheet == null) {
+                throw new BadRequestException("empty xlsx");
+            }
+
+            int headerRowNum = sheet.getFirstRowNum();
+            Row headerRow = sheet.getRow(headerRowNum);
+            if (headerRow == null) {
+                throw new BadRequestException("empty xlsx");
+            }
+
+            DataFormatter formatter = new DataFormatter();
+            FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+
+            List<String> header = new ArrayList<>(EXPECTED_HEADER.size());
+            for (int i = 0; i < EXPECTED_HEADER.size(); i++) {
+                header.add(readCellString(headerRow.getCell(i), formatter, evaluator));
+            }
+            if (!stripBom(header).equals(EXPECTED_HEADER)) {
+                throw new BadRequestException("invalid xlsx header");
+            }
+
+            int lastRowNum = sheet.getLastRowNum();
+            for (int r = headerRowNum + 1; r <= lastRowNum; r++) {
+                Row row = sheet.getRow(r);
+                if (row == null || isRowBlank(row, EXPECTED_HEADER.size(), formatter, evaluator)) {
+                    continue;
+                }
+
+                List<String> cols = new ArrayList<>(EXPECTED_HEADER.size());
+                for (int c = 0; c < EXPECTED_HEADER.size(); c++) {
+                    cols.add(readCellByColumnIndex(row.getCell(c), c, formatter, evaluator));
+                }
+
+                Optional<ValidRow> parsed;
+                try {
+                    parsed = parseRow(cols);
+                } catch (IllegalArgumentException e) {
+                    errors++;
+                    continue;
+                }
+                if (parsed.isEmpty()) {
+                    errors++;
+                    continue;
+                }
+                validRows.add(parsed.get());
+            }
+        } catch (BadRequestException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new IllegalStateException("failed to read xlsx", e);
+        }
+
+        return saveValidRows(validRows, errors);
+    }
+
+    private ReviewImportResult importItems(List<ReviewImportItem> items) {
+        int errors = 0;
+        List<ValidRow> validRows = new ArrayList<>();
+        for (ReviewImportItem item : items) {
+            if (item == null) {
+                errors++;
+                continue;
+            }
+
+            List<String> cols = List.of(
+                    emptyIfNull(item.platformName()),
+                    emptyIfNull(item.productName()),
+                    emptyIfNull(item.brand()),
+                    emptyIfNull(item.model()),
+                    item.rating() == null ? "" : String.valueOf(item.rating()),
+                    emptyIfNull(item.reviewTime()),
+                    emptyIfNull(item.content()),
+                    item.likeCount() == null ? "" : String.valueOf(item.likeCount()),
+                    emptyIfNull(item.reviewIdRaw())
+            );
+
+            Optional<ValidRow> parsed;
+            try {
+                parsed = parseRow(cols);
+            } catch (IllegalArgumentException e) {
+                errors++;
+                continue;
+            }
+            if (parsed.isEmpty()) {
+                errors++;
+                continue;
+            }
+            validRows.add(parsed.get());
+        }
+
+        return saveValidRows(validRows, errors);
+    }
+
+    private ReviewImportResult saveValidRows(List<ValidRow> validRows, int errors) {
         Set<String> existingHashes = loadExistingHashes(validRows);
         Map<String, PlatformEntity> platformCache = new HashMap<>();
         Map<ProductKey, ProductEntity> productCache = new HashMap<>();
@@ -130,13 +298,17 @@ public class ReviewImportService {
             ProductKey productKey = new ProductKey(row.productName(), row.brand(), row.model());
             ProductEntity product = productCache.computeIfAbsent(productKey, key ->
                     productRepository.findExisting(key.name(), key.brand(), key.model())
-                            .orElseGet(() -> productRepository.save(new ProductEntity(
-                                    key.name(),
-                                    key.brand(),
-                                    key.model(),
-                                    now()
-                            )))
-            );
+                            .or(() -> key.brand() == null && key.model() == null
+                                    ? productRepository.findFirstByNameOrderByIdAsc(key.name())
+                                    : Optional.empty())
+                             .orElseGet(() -> productRepository.save(new ProductEntity(
+                                     key.name(),
+                                     key.brand(),
+                                     key.model(),
+                                     false,
+                                     now()
+                             )))
+             );
 
             ReviewEntity entity = new ReviewEntity(
                     platform,
@@ -175,6 +347,88 @@ public class ReviewImportService {
             return fixed;
         }
         return header;
+    }
+
+    private static String emptyIfNull(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static boolean isRowBlank(
+            Row row,
+            int columnCount,
+            DataFormatter formatter,
+            FormulaEvaluator evaluator
+    ) {
+        for (int c = 0; c < columnCount; c++) {
+            String value = readCellString(row.getCell(c), formatter, evaluator);
+            if (value != null && !value.isBlank()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String readCellByColumnIndex(
+            Cell cell,
+            int columnIndex,
+            DataFormatter formatter,
+            FormulaEvaluator evaluator
+    ) {
+        if (cell == null) {
+            return "";
+        }
+        if (columnIndex == 5) {
+            LocalDateTime dateTime = readExcelDateTime(cell);
+            if (dateTime != null) {
+                return dateTime.format(CSV_TIME_FORMATTER);
+            }
+        }
+        if (columnIndex == 4 || columnIndex == 7) {
+            String asInt = readExcelInteger(cell);
+            if (asInt != null) {
+                return asInt;
+            }
+        }
+        return readCellString(cell, formatter, evaluator);
+    }
+
+    private static LocalDateTime readExcelDateTime(Cell cell) {
+        if (cell == null) {
+            return null;
+        }
+        if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+            var date = cell.getDateCellValue();
+            if (date == null) {
+                return null;
+            }
+            return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());
+        }
+        return null;
+    }
+
+    private static String readExcelInteger(Cell cell) {
+        if (cell == null) {
+            return null;
+        }
+        if (cell.getCellType() == CellType.NUMERIC) {
+            double v = cell.getNumericCellValue();
+            long asLong = Math.round(v);
+            if (Math.abs(v - asLong) > 1e-9) {
+                return null;
+            }
+            return String.valueOf(asLong);
+        }
+        return null;
+    }
+
+    private static String readCellString(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
+        if (cell == null) {
+            return "";
+        }
+        String value = evaluator == null
+                ? formatter.formatCellValue(cell)
+                : formatter.formatCellValue(cell, evaluator);
+        return value == null ? "" : value.trim();
     }
 
     private Set<String> loadExistingHashes(List<ValidRow> rows) {

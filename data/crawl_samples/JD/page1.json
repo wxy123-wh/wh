@@ -1,0 +1,38 @@
+[
+  {
+    "rating": 5,
+    "review_time": "2025-12-05 10:00:00",
+    "content": "音质很好，降噪效果明显，连接也稳定。",
+    "like_count": 8,
+    "review_id_raw": "jd_crawl_001"
+  },
+  {
+    "rating": 2,
+    "review_time": "2025-12-05 11:20:00",
+    "content": "续航不行，掉电快，戴久了耳朵有点疼。",
+    "like_count": 3,
+    "review_id_raw": "jd_crawl_002"
+  },
+  {
+    "rating": 4,
+    "review_time": "2025-12-06 09:05:00",
+    "content": "通话还可以，麦克风清晰，风噪控制一般。",
+    "like_count": 5,
+    "review_id_raw": "jd_crawl_003"
+  },
+  {
+    "rating": 3,
+    "review_time": "2025-12-06 14:30:00",
+    "content": "外观不错，性价比中等，偶尔有断连。",
+    "like_count": 1,
+    "review_id_raw": "jd_crawl_004"
+  },
+  {
+    "rating": 5,
+    "review_time": "2025-12-07 20:10:00",
+    "content": "配对很快，佩戴舒适，整体满意。",
+    "like_count": 9,
+    "review_id_raw": "jd_crawl_005"
+  }
+]
+

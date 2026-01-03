@@ -9,6 +9,8 @@ import com.wh.reputation.persistence.ReviewAspectResultEntity;
 import com.wh.reputation.persistence.ReviewAspectResultRepository;
 import com.wh.reputation.persistence.ReviewEntity;
 import com.wh.reputation.persistence.ReviewRepository;
+import com.wh.reputation.alert.AlertService;
+import com.wh.reputation.decision.SuggestionService;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class ReviewAnalysisService {
@@ -27,6 +30,11 @@ public class ReviewAnalysisService {
     private final AspectRepository aspectRepository;
     private final ReviewAspectResultRepository reviewAspectResultRepository;
     private final SentimentAnalyzer sentimentAnalyzer;
+    private final TokenizationService tokenizationService;
+    private final TopicAnalysisService topicAnalysisService;
+    private final ClusterAnalysisService clusterAnalysisService;
+    private final AlertService alertService;
+    private final SuggestionService suggestionService;
     private final ObjectMapper objectMapper;
 
     public ReviewAnalysisService(
@@ -34,12 +42,22 @@ public class ReviewAnalysisService {
             AspectRepository aspectRepository,
             ReviewAspectResultRepository reviewAspectResultRepository,
             SentimentAnalyzer sentimentAnalyzer,
+            TokenizationService tokenizationService,
+            TopicAnalysisService topicAnalysisService,
+            ClusterAnalysisService clusterAnalysisService,
+            AlertService alertService,
+            SuggestionService suggestionService,
             ObjectMapper objectMapper
     ) {
         this.reviewRepository = reviewRepository;
         this.aspectRepository = aspectRepository;
         this.reviewAspectResultRepository = reviewAspectResultRepository;
         this.sentimentAnalyzer = sentimentAnalyzer;
+        this.tokenizationService = tokenizationService;
+        this.topicAnalysisService = topicAnalysisService;
+        this.clusterAnalysisService = clusterAnalysisService;
+        this.alertService = alertService;
+        this.suggestionService = suggestionService;
         this.objectMapper = objectMapper;
     }
 
@@ -54,9 +72,53 @@ public class ReviewAnalysisService {
             return;
         }
 
+        analyzeReviews(reviews);
+        reviewRepository.flush();
+
+        Set<Long> productIds = new LinkedHashSet<>();
+        for (ReviewEntity review : reviews) {
+            if (review.getProduct() != null && review.getProduct().getId() != null) {
+                productIds.add(review.getProduct().getId());
+            }
+        }
+        for (Long productId : productIds) {
+            topicAnalysisService.recompute(productId, null, null);
+            clusterAnalysisService.recompute(productId, null, null);
+            alertService.recompute(productId, null, null);
+            suggestionService.recompute(productId, null, null);
+        }
+    }
+
+    @Transactional
+    public void analyzeByProduct(Long productId, LocalDate start, LocalDate end) {
+        Objects.requireNonNull(productId, "productId");
+
+        LocalDateTime startTime = start == null ? null : start.atStartOfDay();
+        LocalDateTime endExclusive = end == null ? null : end.plusDays(1).atStartOfDay();
+        List<Long> reviewIds = reviewRepository.findIdsForAnalysis(productId, startTime, endExclusive);
+        if (reviewIds.isEmpty()) {
+            return;
+        }
+
+        List<ReviewEntity> reviews = reviewRepository.findAllById(reviewIds);
+        if (reviews.isEmpty()) {
+            return;
+        }
+
+        analyzeReviews(reviews);
+        reviewRepository.flush();
+
+        topicAnalysisService.recompute(productId, start, end);
+        clusterAnalysisService.recompute(productId, start, end);
+        alertService.recompute(productId, start, end);
+        suggestionService.recompute(productId, start, end);
+    }
+
+    private void analyzeReviews(List<ReviewEntity> reviews) {
         List<AspectEntity> aspects = aspectRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
         LocalDateTime now = LocalDateTime.now();
 
+        List<Long> reviewIds = reviews.stream().map(ReviewEntity::getId).toList();
         reviewAspectResultRepository.deleteByReviewIdIn(reviewIds);
 
         List<ReviewAspectResultEntity> resultsToSave = new ArrayList<>();
@@ -65,6 +127,7 @@ public class ReviewAnalysisService {
             SentimentResult sentiment = sentimentAnalyzer.analyze(content);
             review.setOverallSentimentLabel(sentiment.label());
             review.setOverallSentimentScore(sentiment.score());
+            review.setTokensJson(toJson(tokenizationService.tokenize(content)));
 
             for (AspectEntity aspect : aspects) {
                 AspectMatch match = matchAspect(content, aspect.getKeywordsJson());
@@ -86,16 +149,6 @@ public class ReviewAnalysisService {
         }
 
         reviewAspectResultRepository.saveAll(resultsToSave);
-    }
-
-    @Transactional
-    public void analyzeByProduct(Long productId, LocalDate start, LocalDate end) {
-        Objects.requireNonNull(productId, "productId");
-
-        LocalDateTime startTime = start == null ? null : start.atStartOfDay();
-        LocalDateTime endExclusive = end == null ? null : end.plusDays(1).atStartOfDay();
-        List<Long> reviewIds = reviewRepository.findIdsForAnalysis(productId, startTime, endExclusive);
-        analyzeReviewIds(reviewIds);
     }
 
     private AspectMatch matchAspect(String content, String keywordsJson) {

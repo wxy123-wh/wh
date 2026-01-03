@@ -1,54 +1,104 @@
-# MVP 验收用例（强约束：必须全部通过）
+# 验收用例（MVP + 摘要补齐扩展）（强约束：必须全部通过）
 
-## A. 导入与去重
-A1 导入成功
+## 0) 认证准备（必做）
+0.1 登录获取 token
+- When: POST /api/auth/login
+- Then: 返回 token + role（PM/MARKET/OPS）
+
+0.2 后续接口统一带鉴权头
+- Header: Authorization: Bearer <token>
+- 说明：除 /api/auth/login 外，所有 /api/** 都需要该 Header（否则返回 401）
+
+## 1) import 支持 CSV+XLSX+JSON
+1.1 CSV 导入成功
 - Given: /data/sample_reviews.csv
 - When: POST /api/reviews/import
 - Then: inserted > 0 且 errors == 0
 
-A2 去重生效
-- When: 再次导入同一文件
+1.2 XLSX 导入成功
+- Given: 任意与 CSV 字段一致的 xlsx（可由 sample_reviews.csv 转存得到）
+- When: POST /api/reviews/import
+- Then: inserted > 0 且 errors == 0
+
+1.3 JSON 导入成功
+- Given: 任意与 CSV 字段一致的 JSON 数组对象（可由 sample_reviews.csv 转换得到）
+- When: POST /api/reviews/import
+- Then: inserted > 0 且 errors == 0
+
+1.4 去重生效（任选一种格式重复导入）
+- When: 再次导入同一份数据
 - Then: skipped > 0 且 inserted == 0（或极小）
 
-## B. 分析产出正确（可解释）
-B1 维度归因存在
-- When: 导入后调用 GET /api/reviews?page=1&pageSize=20&productId=...
-- Then: items[*].aspects 非空（至少部分评论包含维度标签）
+## 2) crawl/run 能写入数据
+2.1 模拟爬取写入
+- Given: data/crawl_samples/{platformName} 下存在样例文件
+- When: POST /api/crawl/run
+- Then: inserted > 0 且返回 batchId
 
-B2 详情可解释
-- When: GET /api/reviews/{id}
-- Then: aspectResults[*] 必须包含 aspectName、hitKeywords、sentiment、score、confidence
+2.2 review 数量增长
+- When: 调用一次 crawl/run 前后对比 GET /api/dashboard/overview?productId=...
+- Then: reviewCount 增长
 
-B3 情感输出存在
-- Then: review 列表中 overallSentiment 必须存在且为 POS/NEU/NEG 之一
+## 3) topics 返回主题分布
+3.1 topics 可用且有 topWords
+- When: GET /api/analysis/topics?productId=...&start=...&end=...
+- Then: topicCount > 0 且 items[*].topWords 非空
 
-## C. 总览与分析接口可用
-C1 总览
-- When: GET /api/dashboard/overview?productId=...
-- Then: reviewCount>0 且 trend 非空 且 topPriorities 非空
+3.2 topics 可追溯
+- Then: items[*].evidenceReviewIds 非空（或提供可下钻的证据字段）
 
-C2 维度分析
-- When: GET /api/analysis/aspects?productId=...
-- Then: items 数量==8（固定维度数），且每项包含 volume 与 negRate
+## 4) clusters 返回聚类簇与详情
+4.1 clusters 列表非空
+- When: GET /api/analysis/clusters?productId=...&start=...&end=...
+- Then: items 非空，且每项包含 topTerms/size/negRate
 
-C3 维度趋势
-- When: GET /api/analysis/trend?productId=...&aspectId=...
-- Then: series 非空，且每项包含 date、count、negRate
+4.2 cluster 详情至少 5 条代表评论
+- When: GET /api/analysis/clusters/{id}
+- Then: representativeReviews 长度 >= 5
 
-C4 关键词
-- When: GET /api/analysis/keywords?productId=...&aspectId=...&topN=20
-- Then: items 长度<=20 且按 negFreq desc 排序
+## 5) compare 返回维度对比
+5.1 竞品对比返回 8 维度
+- Given: product 至少存在 1 个 competitor（is_competitor=1）
+- Tip: 可直接在库里标记（示例）`update product set is_competitor=1 where id=<competitorId>;`
+- When: GET /api/compare/aspects?productId=...&competitorId=...&start=...&end=...
+- Then: items 数量 == 8，且包含 negRate/posRate/neuRate + diff + normalized
 
-C5 优先级
-- When: GET /api/decision/priority?productId=...&topN=10
-- Then: items 长度==10（或小于10但非空），且每项包含 priority/negRate/growth/volume
+## 6) alerts 能产生 + ack
+6.1 产生预警
+- Given: 构造数据使最近窗口 negRate - 上一窗口 negRate >= threshold
+- When: GET /api/alerts?productId=...&status=new
+- Then: 至少 1 条 alert
 
-## D. 前端可用性
-D1 三页可打开且能看到数据
-- /overview 显示 KPI、趋势、TopPriorities
-- /analysis 点击维度可联动趋势与关键词
-- /reviews 可筛选、可分页、可打开详情抽屉
+6.2 ack 生效
+- When: POST /api/alerts/ack?id=...
+- Then: 再次 GET /api/alerts?productId=...&status=new，该条不再出现（或 status 变为 ack）
 
-## E. 性能下限（本地）
+## 7) suggestions 输出建议 + 证据
+7.1 suggestions 非空
+- When: GET /api/decision/suggestions?productId=...&start=...&end=...
+- Then: items 非空
+
+7.2 每条建议包含 evidence
+- Then: items[*].evidence 非空（包含 reviewId + 内容摘要）
+
+## 8) 登录后角色不同页面不同
+8.1 登录返回 token + role
+- When: POST /api/auth/login
+- Then: 返回 token 且 role ∈ {PM, MARKET, OPS}
+
+8.2 前端菜单按角色变化
+- When: 使用不同 role 登录进入系统
+- Then: 可见页面入口不同（PM/MARKET/OPS 看板不同，且对应功能页可访问）
+
+## 9) before-after 返回活动前后对比
+9.1 创建 event 成功
+- When: POST /api/events
+- Then: 返回 eventId
+
+9.2 before-after 返回非空对比数据
+- When: GET /api/evaluate/before-after?eventId=...
+- Then: before/after 均非空，包含 reviewCount/negRate/各维度 negRate/关键词变化
+
+## 附：性能下限（本地，建议保留）
 - 导入 10,000 行 CSV：<= 30s
 - 评论列表接口（pageSize=20）：<= 1s

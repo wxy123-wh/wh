@@ -25,15 +25,19 @@ public class ProductEntity {
     @Column(length = 64)
     private String model;
 
+    @Column(name = "is_competitor", nullable = false)
+    private boolean isCompetitor;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     protected ProductEntity() {}
 
-    public ProductEntity(String name, String brand, String model, LocalDateTime createdAt) {
+    public ProductEntity(String name, String brand, String model, boolean isCompetitor, LocalDateTime createdAt) {
         this.name = name;
         this.brand = brand;
         this.model = model;
+        this.isCompetitor = isCompetitor;
         this.createdAt = createdAt;
     }
 
@@ -52,5 +56,8 @@ public class ProductEntity {
     public String getModel() {
         return model;
     }
-}
 
+    public boolean isCompetitor() {
+        return isCompetitor;
+    }
+}

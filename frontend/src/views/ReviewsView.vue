@@ -34,6 +34,7 @@ const filters = reactive({
 const drawerOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
+const pendingReviewId = ref(null)
 
 function sentimentTagType(value) {
   const v = String(value || '').toUpperCase()
@@ -74,6 +75,12 @@ function syncFiltersFromRoute() {
   if ('keyword' in q) {
     filters.keyword = q.keyword == null ? '' : String(q.keyword)
   }
+  if ('reviewId' in q) {
+    const n = Number(q.reviewId)
+    pendingReviewId.value = Number.isFinite(n) ? n : null
+  } else {
+    pendingReviewId.value = null
+  }
 }
 
 function pushRouteQuery() {
@@ -82,6 +89,7 @@ function pushRouteQuery() {
   else delete query.aspectId
   if (filters.keyword && String(filters.keyword).trim() !== '') query.keyword = String(filters.keyword).trim()
   else delete query.keyword
+  delete query.reviewId
   router.replace({ path: '/reviews', query })
 }
 
@@ -131,18 +139,29 @@ function resetFilters() {
   loadList()
 }
 
-async function openDetail(row) {
-  if (!row?.id) return
+async function openDetailById(id, { clearRouteReviewId = false } = {}) {
+  const reviewId = Number(id)
+  if (!Number.isFinite(reviewId) || reviewId <= 0) return
   drawerOpen.value = true
   detailLoading.value = true
   detail.value = null
   try {
-    detail.value = await fetchReviewDetail(row.id)
+    detail.value = await fetchReviewDetail(reviewId)
+    if (clearRouteReviewId) {
+      const query = { ...route.query }
+      delete query.reviewId
+      router.replace({ path: '/reviews', query })
+    }
   } catch (e) {
     ElMessage.error(e?.message || '加载详情失败')
   } finally {
     detailLoading.value = false
   }
+}
+
+async function openDetail(row) {
+  if (!row?.id) return
+  await openDetailById(row.id)
 }
 
 const highlightTerms = computed(() => {
@@ -165,10 +184,13 @@ watch([productId, start, end], () => {
 
 watch(
   () => route.query,
-  () => {
+  async () => {
     syncFiltersFromRoute()
     page.value = 1
-    loadList()
+    await loadList()
+    if (pendingReviewId.value) {
+      await openDetailById(pendingReviewId.value, { clearRouteReviewId: true })
+    }
   },
   { immediate: true },
 )
@@ -383,4 +405,3 @@ onMounted(() => {
   word-break: break-word;
 }
 </style>
-
